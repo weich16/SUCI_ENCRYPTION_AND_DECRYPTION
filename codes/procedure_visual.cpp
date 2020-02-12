@@ -1,6 +1,3 @@
-//ENVIRONMENT: 
-//IDE:Visual Studio 2017
-//crypho lib:openssl 1.1.1
 #include <openssl\sha.h>
 #include <openssl\hmac.h>
 #include<openssl\aes.h>
@@ -54,9 +51,10 @@ void handleError(int e)
 	case 25:printf("Unable to transform an octet string from the public key of a EC_POINT .\n"); break;
 	case 26:printf("Unable to compute a ECDH shared secret.\n"); break;
 	case 27:printf("Unable to generate a public key of the EVP_PKEY.\n"); break;
-	case 28:printf("MAC_tags mismatch.\n"); break;
+	case 28:printf("MAC_tags inconsistent.\n"); break;
 	case 29:printf("Unable to generate a BIGNUM* type value.\n"); break;
 	case 30:printf("Unable to generate a EC_POINT by compressed coordinates.\n"); break;
+	case 31:printf("Unable to get the private key from a EVP_PKEY* type value.\n"); break;
 	default:
 		break;
 	}
@@ -65,7 +63,7 @@ void handleError(int e)
 void display(const unsigned char* buf, int buflen)
 {
 	for (int i = 0; i < buflen; i++) printf("%02x", buf[i]);
-	printf("\n");
+	printf("\n\n");
 }
 
 int str2byte(const unsigned char* str, unsigned char* byte_stream,int datalen)
@@ -81,6 +79,7 @@ int str2byte(const unsigned char* str, unsigned char* byte_stream,int datalen)
 		if (65 <= str[i+1] && str[i+1] <= 70) tmp += int(str[i+1]) - 55;
 		if (97 <= str[i+1] && str[i+1] <= 102) tmp += int(str[i+1]) - 87;
 		byte_stream[i/2] = char(tmp);
+		//printf("%02x", byte_stream[i/2]);
 	}
 	return 1;
 }
@@ -99,7 +98,7 @@ int KDF(const unsigned char* sharedkey, unsigned char* derivedkey)
 	return ECDH_KDF_X9_62(derivedkey, EPH_KEY_LENGTH*2, sharedkey, EPH_KEY_LENGTH, NULL, NULL, EVP_sha256());
 }
 
-int EVP_AES_128_CTR(const unsigned char* enckey,const unsigned char* ICB, const unsigned char* plaintext, unsigned char* ciphertext, int datalen)
+int EVP_AES_128_CTR(const unsigned char* enckey,const unsigned char* ICB,const unsigned char* plaintext, unsigned char* ciphertext, int datalen)
 {
 	EVP_CIPHER_CTX *ctx = EVP_CIPHER_CTX_new();
 	if (ctx == NULL) { handleError(19); return 0; }
@@ -113,7 +112,7 @@ int EVP_AES_128_CTR(const unsigned char* enckey,const unsigned char* ICB, const 
 	return encLen;
 }
 
-int HMAC_SHA_256(const unsigned char* mackey,const unsigned char* ciphertest,int datalen,unsigned char* mactag )
+int HMAC_SHA_256(const unsigned char* mackey,const unsigned char* ciphertext,int datalen,unsigned char* mactag )
 {
 	unsigned int mdlen = EPH_KEY_LENGTH;
 	unsigned char outbuf[EPH_KEY_LENGTH];
@@ -158,10 +157,20 @@ int procedure(
 			if (!EVP_PKEY_derive_set_peer(ctx, (EVP_PKEY*)home_key)) { handleError(16); return 0; }
 			if (!EVP_PKEY_derive(ctx, sharedKey, &keylen)) { handleError(17); return 0; }
 			EVP_PKEY_CTX_free(ctx);
+			printf("Eph. Shared Key:");
+			display(sharedKey, EPH_KEY_LENGTH);
 
 			if (!KDF(sharedKey, derivedKey)) { handleError(18); return 0; }
+			printf("Eph. Enc. Key:");
+			display(derivedKey, AES_BLOCK_SIZE);
+			printf("ICB:");
+			display(derivedKey + AES_BLOCK_SIZE, AES_BLOCK_SIZE);
+			printf("Eph. mac key:");
+			display(derivedKey + AES_BLOCK_SIZE*2, SHA256_DIGEST_LENGTH);
 
 			if (!EVP_AES_128_CTR(derivedKey, derivedKey + AES_BLOCK_SIZE, databuf, IObuf + EPH_KEY_LENGTH, *datalen)) return 0;
+			printf("Cipher-text value:");
+			display(IObuf + EPH_KEY_LENGTH, *datalen);
 
 			if (!HMAC(EVP_sha256(),
 				derivedKey + AES_BLOCK_SIZE * 2,
@@ -172,6 +181,8 @@ int procedure(
 				NULL)) {
 				handleError(22); return 0;
 			}
+			printf("MAC-tag value:");
+			display(IObuf + EPH_KEY_LENGTH + *datalen, MAC_TAG_LENGTH);
 		}
 
 		if (profile == PROFILE_B)
@@ -183,13 +194,23 @@ int procedure(
 			EC_GROUP* G = EC_GROUP_new_by_curve_name(NID_X9_62_prime256v1);
 			if (G == NULL) { handleError(24); return 0; }
 			if (!EC_POINT_point2oct(G, public_key, POINT_CONVERSION_COMPRESSED, IObuf, 1 + EPH_KEY_LENGTH, NULL)) { handleError(25); return 0; }
-
-			if (!ECDH_compute_key(sharedKey, EPH_KEY_LENGTH, EC_KEY_get0_public_key((EC_KEY*)home_key), (EC_KEY*)UE_key, NULL)) { handleError(26); return 0; }
 			EC_GROUP_free(G);
 
+			if (!ECDH_compute_key(sharedKey, EPH_KEY_LENGTH, EC_KEY_get0_public_key((EC_KEY*)home_key), (EC_KEY*)UE_key, NULL)) { handleError(26); return 0; }
+			printf("Eph. Shared Key:");
+			display(sharedKey, EPH_KEY_LENGTH);
+
 			if (!KDF(sharedKey, derivedKey)) { handleError(18); return 0; }
+			printf("Eph. Enc. Key:");
+			display(derivedKey, AES_BLOCK_SIZE);
+			printf("ICB:");
+			display(derivedKey + AES_BLOCK_SIZE, AES_BLOCK_SIZE);
+			printf("Eph. mac key:");
+			display(derivedKey + AES_BLOCK_SIZE * 2, SHA256_DIGEST_LENGTH);
 
 			if (!EVP_AES_128_CTR(derivedKey, derivedKey + AES_BLOCK_SIZE, databuf, IObuf + 1 + EPH_KEY_LENGTH, *datalen)) return 0;
+			printf("Cipher-text value:");
+			display(IObuf + 1 + EPH_KEY_LENGTH, *datalen);
 
 			if (!HMAC(EVP_sha256(),
 				derivedKey + AES_BLOCK_SIZE * 2, 
@@ -200,6 +221,8 @@ int procedure(
 				NULL)) {
 				handleError(22); return 0;
 			}
+			printf("MAC-tag value:");
+			display(IObuf + 1 + EPH_KEY_LENGTH + *datalen, MAC_TAG_LENGTH);
 
 		}
 	}
@@ -243,11 +266,12 @@ int procedure(
 				NULL)) {
 				handleError(22); return 0;
 			}
-			if (!memcmp(MAC_tag, IOlen + EPH_KEY_LENGTH + *datalen, MAC_TAG_LENGTH))
+			if (memcmp(MAC_tag, IObuf + EPH_KEY_LENGTH + *datalen, MAC_TAG_LENGTH))
 			{
 				handleError(28);
 				return 0;
 			}
+			else printf("MAC-tag verified!\n\n");
 
 			if (!EVP_AES_128_CTR(derivedKey, derivedKey + AES_BLOCK_SIZE, IObuf + EPH_KEY_LENGTH, databuf, *datalen)) return 0;
 		}
@@ -282,11 +306,12 @@ int procedure(
 				handleError(22); return 0;
 			}
 
-			if (!memcmp(MAC_tag, IOlen + 1 + EPH_KEY_LENGTH + *datalen, MAC_TAG_LENGTH))
+			if (memcmp(MAC_tag, IObuf + 1 + EPH_KEY_LENGTH + *datalen, MAC_TAG_LENGTH))
 			{
 				handleError(28);
 				return 0;
 			}
+			else printf("MAC-tag verified!\n\n");
 
 			if (!EVP_AES_128_CTR(derivedKey, derivedKey + AES_BLOCK_SIZE, IObuf + 1 + EPH_KEY_LENGTH, databuf, *datalen)) return 0;
 
@@ -308,15 +333,28 @@ int keyGenerator(const int io,const int profile,void** UE_key,void** home_key)
 		else
 		{
 			unsigned char UE_key_buf[EPH_KEY_LENGTH] = { 0 };
-			unsigned char home_key_buf[EPH_KEY_LENGTH] = { 0 };
+			unsigned char home_key_buf[EPH_KEY_LENGTH] = { 0 };			
+			printf("Eph. Private Key:");
 			if (!dataReader(UE_key_buf)) { handleError(1); return 0; }
+			printf("Home Network Private Key:");
 			if (!dataReader(home_key_buf)) { handleError(1); return 0; }
 
 			if (profile == PROFILE_A)
 			{
 				*UE_key = EVP_PKEY_new_raw_private_key(EVP_PKEY_X25519, NULL, UE_key_buf, EPH_KEY_LENGTH);
 				*home_key = EVP_PKEY_new_raw_private_key(EVP_PKEY_X25519, NULL, home_key_buf, EPH_KEY_LENGTH);
-				if (*UE_key == NULL || *home_key == NULL) { handleError(2); return 0; }			
+				if (*UE_key == NULL || *home_key == NULL) { handleError(2); return 0; }
+				
+				//display
+				unsigned char checkbuf[MAX_INFO_LENGTH];
+				size_t keylen = EPH_KEY_LENGTH;
+				if (!EVP_PKEY_get_raw_public_key((EVP_PKEY*)*UE_key, checkbuf, &keylen)) { handleError(3); return 0; }
+				printf("Eph. Public Key:");
+				display(checkbuf, (int)keylen);
+				if (!EVP_PKEY_get_raw_public_key((EVP_PKEY*)*home_key, checkbuf, &keylen)) { handleError(3); return 0; }
+				printf("Home Network Public Key:");
+				display(checkbuf, (int)keylen);
+				
 			}
 			else if (profile == PROFILE_B)
 			{
@@ -333,7 +371,21 @@ int keyGenerator(const int io,const int profile,void** UE_key,void** home_key)
 				if (!EC_KEY_set_public_key((EC_KEY*)*UE_key, pubKey1)) { handleError(8); return 0; }
 				if (!EC_KEY_set_public_key((EC_KEY*)*home_key, pubKey2)) { handleError(8); return 0; }
 				EC_POINT_free(pubKey1);
-				EC_POINT_free(pubKey2);			
+				EC_POINT_free(pubKey2);
+				
+				//display
+				const EC_POINT* UE_public_key = EC_KEY_get0_public_key((EC_KEY*)*UE_key);
+				const EC_POINT* home_public_key = EC_KEY_get0_public_key((EC_KEY*)*home_key);
+				if (UE_public_key == NULL || home_public_key == NULL) { handleError(23); return 0; }
+				
+				unsigned char checkbuf[MAX_INFO_LENGTH];
+				if (!EC_POINT_point2oct(G1, UE_public_key, POINT_CONVERSION_COMPRESSED, checkbuf, 1 + EPH_KEY_LENGTH, NULL)) { handleError(25); return 0; }
+				printf("Eph. Public Key:");
+				display(checkbuf, 1 + EPH_KEY_LENGTH);
+				if (!EC_POINT_point2oct(G2, home_public_key, POINT_CONVERSION_COMPRESSED, checkbuf, 1 + EPH_KEY_LENGTH, NULL)) { handleError(25); return 0; }
+				printf("Home Network Public Key:");
+				display(checkbuf, 1 + EPH_KEY_LENGTH);
+				
 			}
 			else
 			{
@@ -362,15 +414,57 @@ int keyGenerator(const int io,const int profile,void** UE_key,void** home_key)
 				if (!EVP_PKEY_keygen(pctx1, (EVP_PKEY**)UE_key)) { handleError(12); return 0; }
 				if (!EVP_PKEY_keygen(pctx2, (EVP_PKEY**)home_key)) { handleError(12); return 0; }
 				EVP_PKEY_CTX_free(pctx1);
-				EVP_PKEY_CTX_free(pctx2);				
+				EVP_PKEY_CTX_free(pctx2);
+
+				//display
+				unsigned char checkbuf[MAX_INFO_LENGTH];
+				size_t keylen = EPH_KEY_LENGTH;
+
+				if (!EVP_PKEY_get_raw_private_key((EVP_PKEY*)*UE_key, checkbuf, &keylen)) { handleError(31); return 0; }
+				printf("Eph. Private Key:");
+				display(checkbuf, (int)keylen);
+				if (!EVP_PKEY_get_raw_private_key((EVP_PKEY*)*home_key, checkbuf, &keylen)) { handleError(31); return 0; }
+				printf("Home Network Private Key:");
+				display(checkbuf, (int)keylen);
+
+				if (!EVP_PKEY_get_raw_public_key((EVP_PKEY*)*UE_key, checkbuf, &keylen)) { handleError(3); return 0; }
+				printf("Eph. Public Key:");
+				display(checkbuf, (int)keylen);
+				if (!EVP_PKEY_get_raw_public_key((EVP_PKEY*)*home_key, checkbuf, &keylen)){ handleError(3); return 0; }
+				printf("Home Network Public Key:");
+				display(checkbuf, (int)keylen);
+				
 			}
 			else if (profile == PROFILE_B)
 			{
 				*UE_key = EC_KEY_new_by_curve_name(NID_X9_62_prime256v1);
 				*home_key = EC_KEY_new_by_curve_name(NID_X9_62_prime256v1);
-				if (UE_key == NULL || home_key == NULL) { handleError(13); return 0; }
+				if (*UE_key == NULL || *home_key == NULL) { handleError(13); return 0; }
 				if (!EC_KEY_generate_key((EC_KEY*)*UE_key)) { handleError(14); return 0; }
 				if (!EC_KEY_generate_key((EC_KEY*)*home_key)){ handleError(14); return 0; }
+
+				//display
+				unsigned char checkbuf[MAX_INFO_LENGTH];
+				if (!EC_KEY_priv2oct((EC_KEY*)*UE_key, checkbuf, EPH_KEY_LENGTH)) { handleError(9); return 0; }
+				printf("Eph. Private Key:");
+				display(checkbuf, EPH_KEY_LENGTH);
+				if (!EC_KEY_priv2oct((EC_KEY*)*home_key, checkbuf, EPH_KEY_LENGTH)) { handleError(9); return 0; }
+				printf("Home Network Private Key:");
+				display(checkbuf, EPH_KEY_LENGTH);
+
+				const EC_GROUP *G1 = EC_KEY_get0_group((EC_KEY*)*UE_key), *G2 = EC_KEY_get0_group((EC_KEY*)*home_key);
+				if (G1 == NULL || G2 == NULL) { handleError(5); return 0; }
+
+				const EC_POINT* UE_public_key = EC_KEY_get0_public_key((EC_KEY*)*UE_key);
+				const EC_POINT* home_public_key = EC_KEY_get0_public_key((EC_KEY*)*home_key);
+				if (UE_public_key == NULL || home_public_key == NULL) { handleError(23); return 0; }
+
+				if (!EC_POINT_point2oct(G1, UE_public_key, POINT_CONVERSION_COMPRESSED, checkbuf, 1 + EPH_KEY_LENGTH, NULL)) { handleError(25); return 0; }
+				printf("Eph. Public Key:");
+				display(checkbuf, 1 + EPH_KEY_LENGTH);
+				if (!EC_POINT_point2oct(G2, home_public_key, POINT_CONVERSION_COMPRESSED, checkbuf, 1 + EPH_KEY_LENGTH, NULL)) { handleError(25); return 0; }
+				printf("Home Network Public Key:");
+				display(checkbuf, 1 + EPH_KEY_LENGTH);
 			}
 			else
 			{
@@ -392,8 +486,17 @@ int main()
 	//test for encryption and decryption
 
 	//choose profile ans IO
-	int profile = PROFILE_B;
-	int io = STDIN;
+	char IOstr[MAX_INFO_LENGTH],profilestr[MAX_INFO_LENGTH];
+	printf("Choose IO:");
+	cin.getline(IOstr, MAC_TAG_LENGTH);
+	printf("\n");
+	printf("Choose profile:");
+	cin.getline(profilestr, MAC_TAG_LENGTH);
+	printf("\n");
+	int io, profile;
+	io = (!strcmp(IOstr,"STDIN")) ? STDIN : NULL;
+	profile = (!strcmp(profilestr,"A") || !strcmp(profilestr, "PROFILE_A")) ? PROFILE_A :
+		((!strcmp(profilestr, "B") || !strcmp(profilestr,"PROFILE_B")) ? PROFILE_B : NULL);
 
 	//key generation
 	void *UE_key, *home_key;
@@ -402,7 +505,10 @@ int main()
 	//encryption
 	unsigned char plaintext[MAX_INFO_LENGTH] = { 0 };
 	unsigned char IObuf[MAX_INFO_LENGTH] = { 0 };
+	printf("Plaintext block:");
 	int datalen = dataReader(plaintext);
+	if (!datalen) { handleError(1); return 0; }
+	printf("\n");
 	if (datalen > MAX_INFO_LENGTH) { handleError(1); return 0; }
 	int IOlen;
 	if (!procedure(
@@ -415,6 +521,9 @@ int main()
 		UE_key,
 		home_key
 	)) return 0;
+
+	printf("Scheme Output:");
+	display(IObuf, IOlen);
 
 	//decryption
 	unsigned char _plaintext[MAX_INFO_LENGTH] = { 0 };
@@ -431,8 +540,12 @@ int main()
 	)) return 0;
 
 	//display
-	display(_plaintext, _datalen);
+	if (memcmp(plaintext, _plaintext, datalen))
+	{
+		printf("Encryptin or decryption failed.\n");
+		return 0;
+	}
+	else printf("Encryptin and decryption succeeded!\n");
 	
-
 	return 0;
 }

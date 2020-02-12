@@ -185,9 +185,9 @@
          > n = FFFFFFFF 00000000 FFFFFFFF FFFFFFFF BCE6FAAD A7179E84 F3B9CAC2 FC632551 
          >
         > h = 01
-      
+    
       方案采用了Elliptic Curve Cofactor Diffie-Hellman Primitive，但由于协因子h=1，因此和其实Elliptic Curve Diffie-Hellman Primitive相同。注意到这里采取了点压缩方案，即将点的二维坐标原本需要32+32字节储存，通过压缩算法压缩为1+32字节。因此Profile<B>传输的公钥会比Profile<A>多一个字节。
-      
+    
    3. ##### 点压缩方案
    
       椭圆曲线上的任一仿射点(x, y)（非无穷远点）都可以压缩成利用其y坐标的最后一比特（记为y'）和x坐标来表示，即(x, y')，这就是点的压缩。反过来，利用(x, y')恢复y坐标，还原仿射点(x, y)的过程就称为点的解压缩。
@@ -321,7 +321,7 @@
      8. ##### 密钥生成
 
         ```C++
-        int keyGenerator(int io,int profile,void** UE_key,void** home_key)
+        int keyGenerator(const int io,const int profile,void** UE_key,void** home_key)
         ```
 
         该函数生成两组密钥UE_key和home_key。

@@ -62,11 +62,10 @@ void handleError(int e)
 	}
 }
 
-int display(unsigned char* buf, int buflen)
+void display(const unsigned char* buf, int buflen)
 {
 	for (int i = 0; i < buflen; i++) printf("%02x", buf[i]);
 	printf("\n");
-	return 0;
 }
 
 int str2byte(const unsigned char* str, unsigned char* byte_stream,int datalen)
@@ -95,12 +94,12 @@ int dataReader(unsigned char* outBuf)
 	return datalen;
 }
 
-int KDF(unsigned char* sharedkey, unsigned char* derivedkey)
+int KDF(const unsigned char* sharedkey, unsigned char* derivedkey)
 {
 	return ECDH_KDF_X9_62(derivedkey, EPH_KEY_LENGTH*2, sharedkey, EPH_KEY_LENGTH, NULL, NULL, EVP_sha256());
 }
 
-int EVP_AES_128_CTR(unsigned char* enckey, unsigned char* ICB, unsigned char* plaintext, unsigned char* ciphertext, int datalen)
+int EVP_AES_128_CTR(const unsigned char* enckey,const unsigned char* ICB, const unsigned char* plaintext, unsigned char* ciphertext, int datalen)
 {
 	EVP_CIPHER_CTX *ctx = EVP_CIPHER_CTX_new();
 	if (ctx == NULL) { handleError(19); return 0; }
@@ -114,10 +113,12 @@ int EVP_AES_128_CTR(unsigned char* enckey, unsigned char* ICB, unsigned char* pl
 	return encLen;
 }
 
-int HMAC_SHA_256(unsigned char* mackey, unsigned char* ciphertest,int datalen,unsigned char* mactag )
+int HMAC_SHA_256(const unsigned char* mackey,const unsigned char* ciphertest,int datalen,unsigned char* mactag )
 {
-	unsigned int mdlen = MAX_INFO_LENGTH;
-	HMAC(EVP_sha256(), mackey, SHA256_DIGEST_LENGTH, ciphertest, datalen, mactag, &mdlen);
+	unsigned int mdlen = EPH_KEY_LENGTH;
+	unsigned char outbuf[EPH_KEY_LENGTH];
+	HMAC(EVP_sha256(), mackey, SHA256_DIGEST_LENGTH, ciphertext, datalen, outbuf, &mdlen);
+	memcpy(mactag, outbuf, MAC_TAG_LENGTH);
 	return mdlen;
 }
 
@@ -296,7 +297,7 @@ int procedure(
 	return 1;
 }
 
-int keyGenerator(int io,int profile,void** UE_key,void** home_key)
+int keyGenerator(const int io,const int profile,void** UE_key,void** home_key)
 {
 	if (io == STDIN)
 	{

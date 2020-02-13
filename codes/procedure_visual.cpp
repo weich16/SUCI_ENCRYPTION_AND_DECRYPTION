@@ -1,3 +1,9 @@
+//ENVIRONMENT: 
+//IDE:Visual Studio 2017
+//crypho lib:openssl 1.1.1
+
+//NOTE:
+//visualized on console, recommanded version
 #include <openssl\sha.h>
 #include <openssl\hmac.h>
 #include<openssl\aes.h>

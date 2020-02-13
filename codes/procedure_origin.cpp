@@ -1,6 +1,9 @@
 //ENVIRONMENT: 
 //IDE:Visual Studio 2017
 //crypho lib:openssl 1.1.1
+
+//NOTE:
+//fundamental function implementation,single input and output
 #include <openssl\sha.h>
 #include <openssl\hmac.h>
 #include<openssl\aes.h>

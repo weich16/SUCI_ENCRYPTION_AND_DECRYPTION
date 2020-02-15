@@ -85,6 +85,7 @@ int str2byte(const unsigned char* str, unsigned char* byte_stream,int datalen)
 		if (65 <= str[i+1] && str[i+1] <= 70) tmp += int(str[i+1]) - 55;
 		if (97 <= str[i+1] && str[i+1] <= 102) tmp += int(str[i+1]) - 87;
 		byte_stream[i/2] = char(tmp);
+		//printf("%02x", byte_stream[i/2]);
 	}
 	return 1;
 }
@@ -98,9 +99,10 @@ int dataReader(unsigned char* outBuf)
 	return datalen;
 }
 
-int KDF(const unsigned char* sharedkey, unsigned char* derivedkey)
+/*
+int KDF(const unsigned char* sharedkey,const unsigned char* sharedinfo,const int infolen, unsigned char* derivedkey)
 {
-	/*
+	
 	//method 1
 	display(sharedkey, EPH_KEY_LENGTH);
 	int len = 4;
@@ -120,11 +122,11 @@ int KDF(const unsigned char* sharedkey, unsigned char* derivedkey)
 	EVP_DigestUpdate(ctx, sharedkey, SHA256_DIGEST_LENGTH + len);
 	EVP_DigestFinal_ex(ctx, derivedkey, NULL);
 	display(derivedkey, EPH_KEY_LENGTH * 2);
-	*/
 
 	//method 3
-	return ECDH_KDF_X9_62(derivedkey, EPH_KEY_LENGTH*2, sharedkey, EPH_KEY_LENGTH, NULL, NULL, EVP_sha256());
+	return ECDH_KDF_X9_62(derivedkey, EPH_KEY_LENGTH*2, sharedkey, EPH_KEY_LENGTH, sharedinfo, infolen, EVP_sha256());
 }
+*/
 
 /*
 int EVP_KDF(unsigned char* sharedkey, unsigned char* derivedkey)
@@ -344,7 +346,7 @@ int procedure(
 			printf("Eph. Shared Key:");
 			display(sharedKey, EPH_KEY_LENGTH);
 
-			if (!KDF(sharedKey, derivedKey)) { handleError(18); return 0; }
+			if (!ECDH_KDF_X9_62(derivedKey, EPH_KEY_LENGTH * 2, sharedKey, EPH_KEY_LENGTH, IObuf, EPH_KEY_LENGTH, EVP_sha256())) { handleError(18); return 0; }
 			printf("Eph. Enc. Key:");
 			display(derivedKey, AES_BLOCK_SIZE);
 			printf("ICB:");
@@ -384,7 +386,7 @@ int procedure(
 			printf("Eph. Shared Key:");
 			display(sharedKey, EPH_KEY_LENGTH);
 
-			if (!KDF(sharedKey, derivedKey)) { handleError(18); return 0; }
+			if (!ECDH_KDF_X9_62(derivedKey, EPH_KEY_LENGTH * 2, sharedKey, EPH_KEY_LENGTH, IObuf, 1 + EPH_KEY_LENGTH, EVP_sha256())) { handleError(18); return 0; }
 			printf("Eph. Enc. Key:");
 			display(derivedKey, AES_BLOCK_SIZE);
 			printf("ICB:");
@@ -439,7 +441,7 @@ int procedure(
 			EVP_PKEY_CTX_free(ctx);
 			EVP_PKEY_free(public_key);
 
-			if (!KDF(sharedKey, derivedKey)) { handleError(18); return 0; }
+			if (!ECDH_KDF_X9_62(derivedKey, EPH_KEY_LENGTH * 2, sharedKey, EPH_KEY_LENGTH, IObuf, EPH_KEY_LENGTH, EVP_sha256())) { handleError(18); return 0; }
 
 			if (!HMAC(EVP_sha256(), 
 				derivedKey + AES_BLOCK_SIZE * 2, 
@@ -478,7 +480,7 @@ int procedure(
 			if (!ECDH_compute_key(sharedKey, EPH_KEY_LENGTH, public_key, (EC_KEY*)home_key, NULL)) { handleError(26); return 0; }
 			EC_POINT_free(public_key);
 
-			if (!KDF(sharedKey, derivedKey)) { handleError(18); return 0; }
+			if (!ECDH_KDF_X9_62(derivedKey, EPH_KEY_LENGTH * 2, sharedKey, EPH_KEY_LENGTH, IObuf, 1 + EPH_KEY_LENGTH, EVP_sha256())) { handleError(18); return 0; }
 
 			if (!HMAC(EVP_sha256(), 
 				derivedKey + AES_BLOCK_SIZE * 2, 
@@ -520,8 +522,10 @@ int keyGenerator(const int io,const int profile,void** UE_key,void** home_key)
 			unsigned char home_key_buf[EPH_KEY_LENGTH] = { 0 };			
 			printf("Eph. Private Key:");
 			if (!dataReader(UE_key_buf)) { handleError(1); return 0; }
+			printf("\n");
 			printf("Home Network Private Key:");
 			if (!dataReader(home_key_buf)) { handleError(1); return 0; }
+			printf("\n");
 
 			if (profile == PROFILE_A)
 			{
@@ -669,21 +673,21 @@ int main()
 {
 	/*	//test for str2byte
 	char strBuf[MAX_INFO_LENGTH] = { 0 };
-	cin.getline(strBuf, MAX_INFO_LENGTH);
+	gets_s(strBuf, _countof(strBuf));
 	unsigned char outBuf[MAX_INFO_LENGTH] = { 0 };
 	unsigned char byteBuf[MAX_INFO_LENGTH] = { 0 };
 	str2byte((unsigned char*)strBuf, byteBuf);
 	SHA256(byteBuf, 1, outBuf);
-    int datalen = (int)strlen((char*)strBuf) / 2;
-	display(outBuf, datalen);
-
+	for (int i = 0; i < 32; i++) {
+		printf("%02x", outBuf[i]);
+	}
 	*/
 
 	/*	//test for KDF
 	unsigned char sharedkey[MAX_INFO_LENGTH] = { 0 };
 	dataReader(sharedkey);
 	unsigned char derivedkey[MAX_INFO_LENGTH] = { 0 };
-	KDF(sharedkey, derivedkey);
+	EVP_KDF(sharedkey, derivedkey);
 	*/
 
 	/*	//test for AES
@@ -714,6 +718,70 @@ int main()
 	dataReader(prvkey2);
 	secp256r1_test(prvkey1,prvkey2,NID_X9_62_prime256v1);
 	*/
+
+	//test for encryption and decryption
+
+	//choose profile ans IO
+	char IOstr[MAX_INFO_LENGTH],profilestr[MAX_INFO_LENGTH];
+	printf("Choose IO:");
+	cin.getline(IOstr, MAC_TAG_LENGTH);
+	printf("\n");
+	printf("Choose profile:");
+	cin.getline(profilestr, MAC_TAG_LENGTH);
+	printf("\n");
+	int io, profile;
+	io = (!strcmp(IOstr,"STDIN")) ? STDIN : NULL;
+	profile = (!strcmp(profilestr,"A") || !strcmp(profilestr, "PROFILE_A")) ? PROFILE_A :
+		((!strcmp(profilestr, "B") || !strcmp(profilestr,"PROFILE_B")) ? PROFILE_B : NULL);
+
+	//key generation
+	void *UE_key, *home_key;
+	if (!keyGenerator(io, profile, &UE_key, &home_key)) return 0;
+
+	//encryption
+	unsigned char plaintext[MAX_INFO_LENGTH] = { 0 };
+	unsigned char IObuf[MAX_INFO_LENGTH] = { 0 };
+	printf("Plaintext block:");
+	int datalen = dataReader(plaintext);
+	if (!datalen) { handleError(1); return 0; }
+	printf("\n");
+	if (datalen > MAX_INFO_LENGTH) { handleError(1); return 0; }
+	int IOlen;
+	if (!procedure(
+		ENCRYPTION,
+		profile,
+		plaintext,
+		&datalen,
+		IObuf,
+		&IOlen,
+		UE_key,
+		home_key
+	)) return 0;
+
+	printf("Scheme Output:");
+	display(IObuf, IOlen);
+
+	//decryption
+	unsigned char _plaintext[MAX_INFO_LENGTH] = { 0 };
+	int _datalen;
+	if (!procedure(
+		DECRYPTION,
+		profile,
+		_plaintext,
+		&_datalen,
+		IObuf,
+		&IOlen,
+		UE_key,
+		home_key
+	)) return 0;
+
+	//display
+	if (memcmp(plaintext, _plaintext, datalen))
+	{
+		printf("Encryptin or decryption failed.\n");
+		return 0;
+	}
+	else printf("Encryptin and decryption succeeded!\n");
 	
 	return 0;
 }

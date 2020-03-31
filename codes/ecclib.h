@@ -67,9 +67,9 @@ void display(const u8* buf, int buflen)
 	printf("\n\n");
 }
 
-int NAI_encoder(const int* type, const u8* rid, const int* schid, const int* hnkey, const u8* ecckey, const u8* userid, const int* textlen, const u8* cip, const u8* mac, const u8* realm, u8* output) {}
+void NAI_encoder(const int* type, const u8* rid, const int* schid, const int* hnkey, const u8* ecckey, const u8* userid, const int* textlen, const u8* cip, const u8* mac, const u8* realm, u8* output) {}
 
-int NAI_decoder(const u8* input, int* type, u8* rid, int* schid, int* hnkey, u8* ecckey, u8* userid, int* textlen, u8* cip, u8* mac, u8* realm) {}
+void NAI_decoder(const u8* input, int* type, u8* rid, int* schid, int* hnkey, u8* ecckey, u8* userid, int* textlen, u8* cip, u8* mac, u8* realm) {}
 
 int MSIN_BCD_encoder(const u8* msin,u8* msin_bcd,int* textlen)
 {
@@ -80,21 +80,23 @@ int MSIN_BCD_encoder(const u8* msin,u8* msin_bcd,int* textlen)
 	}
 	if (*textlen % 2 != 0)
 	{
-		msin_bcd[*textlen / 2] += 0xFF00;
+		msin_bcd[*textlen / 2] |= 0xF0;
 	}
-	*textlen = *textlen / 2;
+	*textlen = (*textlen + 1) / 2;
+	return 1;
 }
 
 int MSIN_BCD_decoder(const u8* msin_bcd, u8* msin, int* textlen)
 {
 	for (int i = 0; i < *textlen * 2; i++)
 	{
-		if (i == *textlen * 2 - 1 && msin_bcd[i / 2] >> 4 == 0xFF) break;
-		if (i % 2 == 0) msin[i] = (msin_bcd[i / 2] & 0xFF) + '0';
+		if (i == *textlen * 2 - 1 && msin_bcd[i / 2] >> 4 == 0x0F) break;
+		if (i % 2 == 0) msin[i] = (msin_bcd[i / 2] & 0x0F) + '0';
 		else msin[i] = (msin_bcd[i / 2] >> 4) + '0';
 	}
-	if (msin_bcd[*textlen / 2] >> 4 == 0xFF) *textlen = *textlen * 2 - 1;
+	if (msin_bcd[*textlen / 2] >> 4 == 0x0F) *textlen = *textlen * 2 - 1;
 	else *textlen = *textlen * 2;
+	return 1;
 }
 
 int Eph_key_generator(const int schid, void** UE_key)
@@ -177,7 +179,8 @@ int HMAC_SHA_256(const u8* mackey, const u8* ciphertext, int datalen, u8* mactag
 	unsigned int mdlen = EPH_KEY_LENGTH;
 	u8 outbuf[EPH_KEY_LENGTH];
 	HMAC(EVP_sha256(), mackey, SHA256_DIGEST_LENGTH, ciphertext, datalen, outbuf, &mdlen);
-	memcpy(mactag, outbuf, MAC_TAG_LENGTH);
+	for (int i = 0; i < MAC_TAG_LENGTH; i++)
+		mactag[i] = outbuf[i];
 	return mdlen;
 }
 
@@ -208,43 +211,17 @@ int SUPI_encryption(
 
 	if (schid == PROFILE_A)
 	{
-		if (!EVP_PKEY_get_raw_public_key((EVP_PKEY*)UE_key, UE_public_key, NULL)) { handleError(3); return 0; }
+		size_t keylen = EPH_KEY_LENGTH;
+		if (!EVP_PKEY_get_raw_public_key((EVP_PKEY*)UE_key, UE_public_key, &keylen)) { handleError(3); return 0; }
 		EVP_PKEY_CTX *ctx = EVP_PKEY_CTX_new((EVP_PKEY*)UE_key, NULL);
 		if (ctx == NULL) { handleError(10); return 0; }
 		if (!EVP_PKEY_derive_init(ctx)) { handleError(15); return 0; };
 		EVP_PKEY* home_key = EVP_PKEY_new_raw_public_key(EVP_PKEY_X25519, NULL, home_public_key, EPH_KEY_LENGTH);
 		if (home_key == NULL) { handleError(2); return 0; }
 		if (!EVP_PKEY_derive_set_peer(ctx, home_key)) { handleError(16); return 0; }
-		if (!EVP_PKEY_derive(ctx, sharedKey, NULL)) { handleError(17); return 0; }
+		if (!EVP_PKEY_derive(ctx, sharedKey, &keylen)) { handleError(17); return 0; }
 		EVP_PKEY_CTX_free(ctx);
-		printf("Eph. Shared Key:");
-		display(sharedKey, EPH_KEY_LENGTH);
-
-		if (!ECDH_KDF_X9_62(derivedKey, EPH_KEY_LENGTH * 2, sharedKey, EPH_KEY_LENGTH, UE_public_key, EPH_KEY_LENGTH, EVP_sha256())) { handleError(18); return 0; }
-		printf("Eph. Enc. Key:");
-		display(derivedKey, AES_BLOCK_SIZE);
-		printf("ICB:");
-		display(derivedKey + AES_BLOCK_SIZE, AES_BLOCK_SIZE);
-		printf("Eph. mac key:");
-		display(derivedKey + AES_BLOCK_SIZE * 2, SHA256_DIGEST_LENGTH);
-
-		if (!EVP_AES_128_CTR(derivedKey, derivedKey + AES_BLOCK_SIZE, plaintext, ciphertext,textlen)) return 0;
-		printf("Cipher-text value:");
-		display(ciphertext, textlen);
-
-		if (!HMAC(EVP_sha256(),
-			derivedKey + AES_BLOCK_SIZE * 2,
-			SHA256_DIGEST_LENGTH,
-			ciphertext,
-			textlen,
-			mac,
-			NULL)) {
-			handleError(22); return 0;
-		}
-		printf("MAC-tag value:");
-		display(mac, MAC_TAG_LENGTH);
 	}
-
 	if (schid == PROFILE_B)
 	{
 		const EC_POINT* public_key = EC_KEY_get0_public_key((EC_KEY*)UE_key);
@@ -263,34 +240,37 @@ int SUPI_encryption(
 		EC_GROUP_free(G);
 
 		if (!ECDH_compute_key(sharedKey, EPH_KEY_LENGTH, home_key, (EC_KEY*)UE_key, NULL)) { handleError(26); return 0; }
-		printf("Eph. Shared Key:");
-		display(sharedKey, EPH_KEY_LENGTH);
-
-		if (!ECDH_KDF_X9_62(derivedKey, EPH_KEY_LENGTH * 2, sharedKey, EPH_KEY_LENGTH, UE_public_key, 1 + EPH_KEY_LENGTH, EVP_sha256())) { handleError(18); return 0; }
-		printf("Eph. Enc. Key:");
-		display(derivedKey, AES_BLOCK_SIZE);
-		printf("ICB:");
-		display(derivedKey + AES_BLOCK_SIZE, AES_BLOCK_SIZE);
-		printf("Eph. mac key:");
-		display(derivedKey + AES_BLOCK_SIZE * 2, SHA256_DIGEST_LENGTH);
-
-		if (!EVP_AES_128_CTR(derivedKey, derivedKey + AES_BLOCK_SIZE, plaintext, ciphertext, textlen)) return 0;
-		printf("Cipher-text value:");
-		display(ciphertext, textlen);
-
-		if (!HMAC(EVP_sha256(),
-			derivedKey + AES_BLOCK_SIZE * 2,
-			SHA256_DIGEST_LENGTH,
-			ciphertext,
-			textlen,
-			mac,
-			NULL)) {
-			handleError(22); return 0;
-		}
-		printf("MAC-tag value:");
-		display(mac, MAC_TAG_LENGTH);
-
 	}
+
+	printf("Eph. Shared Key:");
+	display(sharedKey, EPH_KEY_LENGTH);
+	int sinfolen = (schid == PROFILE_A) ? EPH_KEY_LENGTH : EPH_KEY_LENGTH + 1;
+	if (!ECDH_KDF_X9_62(derivedKey, EPH_KEY_LENGTH * 2, sharedKey, EPH_KEY_LENGTH, UE_public_key, sinfolen, EVP_sha256())) { handleError(18); return 0; }
+	printf("Eph. Enc. Key:");
+	display(derivedKey, AES_BLOCK_SIZE);
+	printf("ICB:");
+	display(derivedKey + AES_BLOCK_SIZE, AES_BLOCK_SIZE);
+	printf("Eph. mac key:");
+	display(derivedKey + AES_BLOCK_SIZE * 2, SHA256_DIGEST_LENGTH);
+
+	if (!EVP_AES_128_CTR(derivedKey, derivedKey + AES_BLOCK_SIZE, plaintext, ciphertext, textlen)) return 0;
+	printf("Cipher-text value:");
+	display(ciphertext, textlen);
+
+	u8 macbuf[EPH_KEY_LENGTH];
+	if (!HMAC(EVP_sha256(),
+		derivedKey + AES_BLOCK_SIZE * 2,
+		SHA256_DIGEST_LENGTH,
+		ciphertext,
+		textlen,
+		macbuf,
+		NULL)) {
+		handleError(22); return 0;
+	}
+	for (int i = 0; i < MAC_TAG_LENGTH; i++)
+		mac[i] = macbuf[i];
+	printf("MAC-tag value:");
+	display(mac, MAC_TAG_LENGTH);
 
 	return 1;
 }
@@ -324,9 +304,9 @@ int SUCI_decryption(
 	{
 		EVP_PKEY* public_key = EVP_PKEY_new_raw_public_key(EVP_PKEY_X25519, NULL, UE_public_key, EPH_KEY_LENGTH);
 		if (public_key == NULL) { handleError(27); return 0; }
-		EVP_PKEY* home_key = EVP_PKEY_new_raw_private_key(EVP_PKEY_X25519, NULL, UE_public_key, EPH_KEY_LENGTH);
+		EVP_PKEY* home_key = EVP_PKEY_new_raw_private_key(EVP_PKEY_X25519, NULL, home_private_key, EPH_KEY_LENGTH);
 		if (home_key == NULL) { handleError(32); return 0; }
-		EVP_PKEY_CTX *ctx = EVP_PKEY_CTX_new((EVP_PKEY*)home_key, NULL);
+		EVP_PKEY_CTX *ctx = EVP_PKEY_CTX_new(home_key, NULL);
 		if (ctx == NULL) { handleError(10); return 0; }
 		if (!EVP_PKEY_derive_init(ctx)) { handleError(15); return 0; }
 		if (!EVP_PKEY_derive_set_peer(ctx, public_key)) { handleError(16); return 0; }
@@ -335,36 +315,7 @@ int SUCI_decryption(
 		EVP_PKEY_CTX_free(ctx);
 		EVP_PKEY_free(public_key);
 		EVP_PKEY_free(home_key);
-
-		if (!ECDH_KDF_X9_62(derivedKey, EPH_KEY_LENGTH * 2, sharedKey, EPH_KEY_LENGTH, UE_public_key, EPH_KEY_LENGTH, EVP_sha256())) { handleError(18); return 0; }
-
-		if (!HMAC(EVP_sha256(),
-			derivedKey + AES_BLOCK_SIZE * 2,
-			SHA256_DIGEST_LENGTH,
-			ciphertext,
-			textlen,
-			xmac,
-			NULL)) {
-			handleError(22); return 0;
-		}
-
-		bool flag = 1;
-		for (int i = 0;i < MAC_TAG_LENGTH; i++)
-			if (xmac[i] != mac[i])
-			{
-				flag = 0;
-				break;
-			}
-		if (!flag)
-		{
-			handleError(28);
-			return 0;
-		}
-		else printf("MAC-tag verified!\n\n");
-
-		if (!EVP_AES_128_CTR(derivedKey, derivedKey + AES_BLOCK_SIZE, ciphertext, plaintext, textlen)) return 0;
 	}
-
 	if (schid == PROFILE_B)
 	{
 		EC_GROUP *G = EC_GROUP_new_by_curve_name(NID_X9_62_prime256v1);
@@ -388,37 +339,36 @@ int SUCI_decryption(
 
 		if (!ECDH_compute_key(sharedKey, EPH_KEY_LENGTH, public_key, home_key, NULL)) { handleError(26); return 0; }
 		EC_POINT_free(public_key);
-
-		if (!ECDH_KDF_X9_62(derivedKey, EPH_KEY_LENGTH * 2, sharedKey, EPH_KEY_LENGTH, UE_public_key, 1 + EPH_KEY_LENGTH, EVP_sha256())) { handleError(18); return 0; }
-
-		if (!HMAC(EVP_sha256(),
-			derivedKey + AES_BLOCK_SIZE * 2,
-			SHA256_DIGEST_LENGTH,
-			ciphertext,
-			textlen,
-			xmac,
-			NULL)) {
-			handleError(22); return 0;
-		}
-
-		bool flag = 1;
-		for (int i = 0; i < MAC_TAG_LENGTH; i++)
-			if (xmac[i] != mac[i])
-			{
-				flag = 0;
-				break;
-			}
-		if (!flag)
-		{
-			handleError(28);
-			return 0;
-		}
-		else printf("MAC-tag verified!\n\n");
-
-		if (!EVP_AES_128_CTR(derivedKey, derivedKey + AES_BLOCK_SIZE, ciphertext, plaintext, textlen)) return 0;
-
 	}
 
+	int sinfolen = (schid == PROFILE_A) ? EPH_KEY_LENGTH : EPH_KEY_LENGTH + 1;
+	if (!ECDH_KDF_X9_62(derivedKey, EPH_KEY_LENGTH * 2, sharedKey, EPH_KEY_LENGTH, UE_public_key, sinfolen, EVP_sha256())) { handleError(18); return 0; }
+
+	if (!HMAC(EVP_sha256(),
+		derivedKey + AES_BLOCK_SIZE * 2,
+		SHA256_DIGEST_LENGTH,
+		ciphertext,
+		textlen,
+		xmac,
+		NULL)) {
+		handleError(22); return 0;
+	}
+
+	bool flag = 1;
+	for (int i = 0; i < MAC_TAG_LENGTH; i++)
+		if (xmac[i] != mac[i])
+		{
+			flag = 0;
+			break;
+		}
+	if (!flag)
+	{
+		handleError(28);
+		return 0;
+	}
+	else printf("MAC-tag verified!\n\n");
+
+	if (!EVP_AES_128_CTR(derivedKey, derivedKey + AES_BLOCK_SIZE, ciphertext, plaintext, textlen)) return 0;
 	return 1;
 }
 
@@ -433,7 +383,7 @@ int SICF(const u8* SUPI, u8* SUCI)
 	int textlen;
 	u8 ecckey[EPH_KEY_LENGTH];
 	u8 cip[MAX_INFO_LENGTH];
-	u8 mac[MAC_TAG_LENGTH];
+	u8 mac[EPH_KEY_LENGTH];
 
 	NAI_decoder(SUPI, &type, rid, &schid, &hnkey, NULL, userid, &textlen, NULL, NULL,realm);
 	void* UE_key;
@@ -451,6 +401,7 @@ int SICF(const u8* SUPI, u8* SUCI)
 	}
 
 	NAI_encoder(&type, rid, &schid, &hnkey, ecckey, NULL, &textlen, cip, mac, realm, SUCI);
+	return 1;
 }
 
 int SIDF(const u8* SUCI, u8* SUPI)
@@ -463,7 +414,7 @@ int SIDF(const u8* SUCI, u8* SUPI)
 	u8 userid[MAX_INFO_LENGTH];
 	int textlen;
 	u8 cip[MAX_INFO_LENGTH];
-	u8 mac[MAC_TAG_LENGTH];
+	u8 mac[EPH_KEY_LENGTH];
 	u8 realm[MAX_INFO_LENGTH];
 
 	NAI_decoder(SUCI, &type, rid, &schid, &hnkey, ecckey, userid, &textlen, cip, mac, realm);
@@ -480,4 +431,6 @@ int SIDF(const u8* SUCI, u8* SUPI)
 	{
 		NAI_encoder(&type, rid, &schid, &hnkey, NULL, plaintext, &textlen, NULL, NULL, realm, SUPI);
 	}
+
+	return 1;
 }

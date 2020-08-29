@@ -6,6 +6,12 @@
 #include <openssl\hmac.h>
 #define MAX_LEN 1024
 
+void display(const unsigned char* buf, int buflen)
+{
+	for (int i = 0; i < buflen; i++) printf("%02x", buf[i]);
+	printf("\n\n");
+}
+
 int HMAC_SHA_256(
 	const unsigned char* mackey, 
 	const unsigned char* ciphertext, 
@@ -31,11 +37,12 @@ int HMAC_SHA_256(
 int PRF_new(
 	const unsigned char* KEY,
 	const unsigned char* S,
+	const int counts,
 	unsigned char* MK
 )
 {
+	if (counts >= 256) return 0; //MK长度不超过32*255字节，否则文档中未定义处理方法
 	int len = strlen((const char*)S);
-	int counts = (len % 32 == 0) ? len / 32 : len / 32 + 1;
 	unsigned char T[MAX_LEN] = { 0 };
 	for (int i = 0; i < counts; i++)
 	{
@@ -71,34 +78,49 @@ int Universal_key_generator(
 	const unsigned char* P0,
 	const unsigned char* P1,
 	const unsigned char* P2,
-	unsigned char* outbuf
+	unsigned char* outbuf,
+	const int opt_P0_len = NULL,
+	const int opt_P1_len = NULL,
+	const int opt_P2_len = NULL
 )
 {
 	unsigned char S[MAX_LEN] = { 0 };
 	S[0] = FC;
-	unsigned short L0 = strlen((const char*)P0);
+	unsigned short L0 = opt_P0_len?opt_P0_len:strlen((const char*)P0);
 	memcpy(S + 1, P0, L0);
 	S[1 + L0] = L0 >> 8;
 	S[1 + L0 + 1] = L0 & 0xFF;
 	if (P1 != NULL)
 	{
-		unsigned short L1 = strlen((const char*)P1);
+		unsigned short L1 = opt_P1_len?opt_P1_len:strlen((const char*)P1);
 		L1 = (L1 == 0) ? 1 : L1;
 		memcpy(S + 1 + L0 + 2, P1, L1);
 		S[1 + L0 + 2 + L1] = L1 >> 8;
 		S[1 + L0 + 2 + L1 + 1] = L1 & 0xFF;
 		if (P2 != NULL)
 		{
-			unsigned short L2 = strlen((const char*)P2);
+			unsigned short L2 = opt_P2_len?opt_P2_len:strlen((const char*)P2);
 			L2 = (L2 == 0) ? 1 : L2;
 			memcpy(S + 1 + L0 + 2 + L1 + 2, P2, L2);
 			S[1 + L0 + 2 + L1 + 2 + L2] = L2 >> 8;
 			S[1 + L0 + 2 + L1 + 2 + L2 + 1] = L2 & 0xFF;
+			cout << "S:";
+			display(S, L0 + L1 + L2 + 7);
 			HMAC_SHA_256(KEY, S, L0 + L1 + L2 + 7, outbuf, 32);
 		}
-		else HMAC_SHA_256(KEY, S, L0 + L1 + 5, outbuf, 32);
+		else 
+		{
+			cout << "S:";
+			display(S, L0 + L1 + 5);
+			HMAC_SHA_256(KEY, S, L0 + L1 + 5, outbuf, 32);
+		}
 	}
-	else HMAC_SHA_256(KEY, S, L0 + 3, outbuf, 32);
+	else 
+	{
+		cout << "S:";
+		display(S, L0 + 3);
+		HMAC_SHA_256(KEY, S, L0 + 3, outbuf, 32);
+	}
 	
 	return 1;
 }
@@ -131,7 +153,7 @@ int CKIK_new_generator(
 	return 1;
 }
 
-//rfc 5448
+//rfc 5448 MK
 int MK_EAP_AKA_new_generator(
 	const unsigned char* CK_new,
 	const unsigned char* IK_new,
@@ -148,11 +170,11 @@ int MK_EAP_AKA_new_generator(
 	unsigned short L1 = strlen((const char*)Identity);
 	memcpy(S + 8, Identity, L1);
 
-	PRF_new(KEY, S, MK);
+	PRF_new(KEY, S, 7, MK);
 	return 1;
 }
 
-//rfc 5448
+//rfc 5448 key set
 int Kset_EAP_AKA_new_generator(
 	const unsigned char* MK,
 	unsigned char* K_encr,
@@ -224,7 +246,7 @@ int Kamf_generator(
 	unsigned char* Kamf
 )
 {
-	Universal_key_generator(0x6D, Kseaf, SUPI, ABBA, NULL, Kamf);
+	Universal_key_generator(0x6D, Kseaf, SUPI, ABBA, NULL, Kamf, NULL, 2);
 	return 1;
 }
 
@@ -233,12 +255,12 @@ int algorithm_key_generator(
 	const unsigned char* key,
 	const unsigned char algorithm_type_distinguisher,
 	const unsigned char algorithm_identity,
-	unsigned char* alg_key
+	unsigned char* Kalg
 )
 {
 	unsigned char outbuf[MAX_LEN] = { 0 };
 	Universal_key_generator(0x69, key, &algorithm_type_distinguisher, &algorithm_identity, NULL, outbuf);
-	memcpy(alg_key, outbuf + 16, 16);
+	memcpy(Kalg, outbuf + 16, 16);
 	return 1;
 }
 
@@ -354,13 +376,13 @@ int SoR_MAC_I_ausf_generator(
 //33.501 A.18
 int SoR_MAC_I_UE_generator(
 	const unsigned char* Kausf,
-	const unsigned char* SoR_Acknowledgement,
+	const unsigned char SoR_Acknowledgement,
 	const unsigned char* Counter_sor,
 	unsigned char* SoR_MAC_I_UE
 )
 {
 	unsigned char outbuf[32];
-	Universal_key_generator(0x78, Kausf, SoR_Acknowledgement, Counter_sor, NULL, outbuf);
+	Universal_key_generator(0x78, Kausf, &SoR_Acknowledgement, Counter_sor, NULL, outbuf);
 	memcpy(SoR_MAC_I_UE, outbuf + 16, 16);
 	return 1;
 }
@@ -382,13 +404,13 @@ int UPU_MAC_I_ausf_generator(
 //33.501 A.20
 int UPU_MAC_I_UE_generator(
 	const unsigned char* Kausf,
-	const unsigned char*  UPU_Acknowledgement,
+	const unsigned char  UPU_Acknowledgement,
 	const unsigned char* Counter_upu,
 	unsigned char* UPU_MAC_I_UE
 )
 {
 	unsigned char outbuf[32];
-	Universal_key_generator(0x7C, Kausf, UPU_Acknowledgement, Counter_upu, NULL, outbuf);
+	Universal_key_generator(0x7C, Kausf, &UPU_Acknowledgement, Counter_upu, NULL, outbuf);
 	memcpy(UPU_MAC_I_UE, outbuf + 16, 16);
 	return 1;
 }

@@ -1,6 +1,7 @@
 #pragma once
 #pragma comment(lib,"libssl.lib")
 #pragma comment(lib,"libcrypto.lib")
+#include <iostream>
 #include <openssl\evp.h>
 #include <openssl\sha.h>
 #include <openssl\hmac.h>
@@ -13,21 +14,21 @@ void display(const unsigned char* buf, int buflen)
 }
 
 int HMAC_SHA_256(
-	const unsigned char* mackey, 
-	const unsigned char* ciphertext, 
-	const unsigned int datalen, 
+	const unsigned char* mackey,
+	const unsigned char* ciphertext,
+	const unsigned int datalen,
 	unsigned char* mactag,
 	const unsigned int maclen
 )
 {
 	unsigned char outbuf[256];
 	HMAC(
-		EVP_sha256(), 
-		mackey, 
-		SHA256_DIGEST_LENGTH, 
-		ciphertext, 
-		datalen, 
-		outbuf, 
+		EVP_sha256(),
+		mackey,
+		SHA256_DIGEST_LENGTH,
+		ciphertext,
+		datalen,
+		outbuf,
 		NULL
 	);
 	memcpy(mactag, outbuf, maclen);
@@ -76,52 +77,52 @@ int Universal_key_generator(
 	const unsigned char FC,
 	const unsigned char* KEY,
 	const unsigned char* P0,
+	const int opt_P0_len,
 	const unsigned char* P1,
+	const int opt_P1_len,
 	const unsigned char* P2,
-	unsigned char* outbuf,
-	const int opt_P0_len = NULL,
-	const int opt_P1_len = NULL,
-	const int opt_P2_len = NULL
+	const int opt_P2_len,
+	unsigned char* outbuf
 )
 {
 	unsigned char S[MAX_LEN] = { 0 };
 	S[0] = FC;
-	unsigned short L0 = opt_P0_len?opt_P0_len:strlen((const char*)P0);
+	unsigned short L0 = opt_P0_len ? opt_P0_len : strlen((const char*)P0);
 	memcpy(S + 1, P0, L0);
 	S[1 + L0] = L0 >> 8;
 	S[1 + L0 + 1] = L0 & 0xFF;
 	if (P1 != NULL)
 	{
-		unsigned short L1 = opt_P1_len?opt_P1_len:strlen((const char*)P1);
+		unsigned short L1 = opt_P1_len ? opt_P1_len : strlen((const char*)P1);
 		L1 = (L1 == 0) ? 1 : L1;
 		memcpy(S + 1 + L0 + 2, P1, L1);
 		S[1 + L0 + 2 + L1] = L1 >> 8;
 		S[1 + L0 + 2 + L1 + 1] = L1 & 0xFF;
 		if (P2 != NULL)
 		{
-			unsigned short L2 = opt_P2_len?opt_P2_len:strlen((const char*)P2);
+			unsigned short L2 = opt_P2_len ? opt_P2_len : strlen((const char*)P2);
 			L2 = (L2 == 0) ? 1 : L2;
 			memcpy(S + 1 + L0 + 2 + L1 + 2, P2, L2);
 			S[1 + L0 + 2 + L1 + 2 + L2] = L2 >> 8;
 			S[1 + L0 + 2 + L1 + 2 + L2 + 1] = L2 & 0xFF;
-			cout << "S:";
+			std::cout << "S:";
 			display(S, L0 + L1 + L2 + 7);
 			HMAC_SHA_256(KEY, S, L0 + L1 + L2 + 7, outbuf, 32);
 		}
-		else 
+		else
 		{
-			cout << "S:";
+			std::cout << "S:";
 			display(S, L0 + L1 + 5);
 			HMAC_SHA_256(KEY, S, L0 + L1 + 5, outbuf, 32);
 		}
 	}
-	else 
+	else
 	{
-		cout << "S:";
+		std::cout << "S:";
 		display(S, L0 + 3);
 		HMAC_SHA_256(KEY, S, L0 + 3, outbuf, 32);
 	}
-	
+
 	return 1;
 }
 
@@ -133,7 +134,7 @@ int Kausf_5G_AKA_generator(
 	unsigned char* Kausf
 )
 {
-	Universal_key_generator(0x6A, CKIK, SNname, SQN_xor_AK, NULL, Kausf);
+	Universal_key_generator(0x6A, CKIK, SNname, NULL, SQN_xor_AK, 6, NULL, NULL, Kausf);
 	return 1;
 }
 
@@ -147,7 +148,7 @@ int CKIK_new_generator(
 )
 {
 	unsigned char outbuf[32];
-	Universal_key_generator(0x20, CKIK, SNname, SQN_xor_AK, NULL, outbuf);
+	Universal_key_generator(0x20, CKIK, SNname, NULL, SQN_xor_AK, 6, NULL, NULL, outbuf);
 	memcpy(CK_new, outbuf, 16);
 	memcpy(IK_new, outbuf + 16, 16);
 	return 1;
@@ -204,7 +205,7 @@ int RES_star_generator(
 )
 {
 	unsigned char outbuf[32];
-	Universal_key_generator(0x6B, CKIK, SNname, RAND, RES, outbuf);
+	Universal_key_generator(0x6B, CKIK, SNname, NULL, RAND, 32, RES, 32, outbuf);
 	memcpy(RES_star, outbuf + 16, 16);
 	return 1;
 }
@@ -217,9 +218,9 @@ int HRES_star_generator(
 )
 {
 	unsigned char S[MAX_LEN] = { 0 };
-	unsigned short L1 = strlen((const char*)RAND);
+	unsigned short L1 = 32;
 	memcpy(S, RAND, L1);
-	unsigned short L2 = strlen((const char*)RES_star);
+	unsigned short L2 = 16;
 	memcpy(S + L1, RES_star, L2);
 	unsigned char outbuf[32] = { 0 };
 	SHA256(S, L1 + L2, outbuf);
@@ -234,7 +235,7 @@ int Kseaf_generator(
 	unsigned char* Kseaf
 )
 {
-	Universal_key_generator(0x6C, Kausf, SNname, NULL, NULL, Kseaf);
+	Universal_key_generator(0x6C, Kausf, SNname, NULL, NULL, NULL, NULL, NULL, Kseaf);
 	return 1;
 }
 
@@ -246,7 +247,7 @@ int Kamf_generator(
 	unsigned char* Kamf
 )
 {
-	Universal_key_generator(0x6D, Kseaf, SUPI, ABBA, NULL, Kamf, NULL, 2);
+	Universal_key_generator(0x6D, Kseaf, SUPI, NULL, ABBA, 2, NULL, NULL, Kamf);
 	return 1;
 }
 
@@ -259,7 +260,7 @@ int algorithm_key_generator(
 )
 {
 	unsigned char outbuf[MAX_LEN] = { 0 };
-	Universal_key_generator(0x69, key, &algorithm_type_distinguisher, &algorithm_identity, NULL, outbuf);
+	Universal_key_generator(0x69, key, &algorithm_type_distinguisher, 1, &algorithm_identity, 1, NULL, NULL, outbuf);
 	memcpy(Kalg, outbuf + 16, 16);
 	return 1;
 }
@@ -272,7 +273,7 @@ int KgNB_generator(
 	unsigned char* KgNB
 )
 {
-	Universal_key_generator(0x6E, Kamf, Uplink_NAS_COUNT, &access_type_distinguisher, NULL, KgNB);
+	Universal_key_generator(0x6E, Kamf, Uplink_NAS_COUNT, 4, &access_type_distinguisher, 1, NULL, NULL, KgNB);
 	return 1;
 }
 
@@ -283,7 +284,7 @@ int NH_generator(
 	unsigned char* NH
 )
 {
-	Universal_key_generator(0x6F, Kamf, SYNC_input, NULL, NULL, NH);
+	Universal_key_generator(0x6F, Kamf, SYNC_input, 20, NULL, NULL, NULL, NULL, NH);
 	return 1;
 }
 
@@ -295,7 +296,7 @@ int Kng_RAN_new_gNB_generator(
 	unsigned char* Kng_RAN
 )
 {
-	Universal_key_generator(0x70,key,PCI,ARFCN_DL,NULL,Kng_RAN);
+	Universal_key_generator(0x70, key, PCI, 2, ARFCN_DL, 3, NULL, NULL, Kng_RAN);
 	return 1;
 }
 
@@ -307,19 +308,19 @@ int Kng_RAN_new_ng_eNB_generator(
 	unsigned char* Kng_RAN
 )
 {
-	Universal_key_generator(0x71, key, PCI, EARFCN_DL, NULL, Kng_RAN);
+	Universal_key_generator(0x71, key, PCI, 2, EARFCN_DL, 3, NULL, NULL, Kng_RAN);
 	return 1;
 }
 
 //33.501 A.13
 int Kamf_new_generator(
 	const unsigned char* Kamf,
-	const unsigned char* DIRECTION,
+	const unsigned char DIRECTION,
 	const unsigned char* COUNT,
 	unsigned char* Kamf_new
 )
 {
-	Universal_key_generator(0x72, Kamf, DIRECTION, COUNT, NULL, Kamf_new);
+	Universal_key_generator(0x72, Kamf, &DIRECTION, 1, COUNT, 4, NULL, NULL, Kamf_new);
 	return 1;
 }
 
@@ -331,7 +332,7 @@ int Kasme_new_generator(
 	unsigned char* Kasme_new
 )
 {
-	Universal_key_generator(FC, Kamf, NAS_link_COUNT, NULL, NULL, Kasme_new);
+	Universal_key_generator(FC, Kamf, NAS_link_COUNT, 4, NULL, NULL, NULL, NULL, Kasme_new);
 	return 1;
 }
 
@@ -343,7 +344,7 @@ int Kamf_new_from_ASME_generator(
 	unsigned char* Kamf_new
 )
 {
-	Universal_key_generator(FC, Kasme, NAS_link_COUNT, NULL, NULL, Kamf_new);
+	Universal_key_generator(FC, Kasme, NAS_link_COUNT, 4, NULL, NULL, NULL, NULL, Kamf_new);
 	return 1;
 }
 
@@ -354,7 +355,7 @@ int Ksn_generator(
 	unsigned char* Ksn
 )
 {
-	Universal_key_generator(0x79, key, SN_counter, NULL, NULL, Ksn);
+	Universal_key_generator(0x79, key, SN_counter, 2, NULL, NULL, NULL, NULL, Ksn);
 	return 1;
 }
 
@@ -368,7 +369,7 @@ int SoR_MAC_I_ausf_generator(
 )
 {
 	unsigned char outbuf[32];
-	Universal_key_generator(0x77, Kausf, SoR_header, Counter_sor, PLMN_ID, outbuf);
+	Universal_key_generator(0x77, Kausf, SoR_header, 8, Counter_sor, 2, PLMN_ID, NULL, outbuf);
 	memcpy(SoR_MAC_I_ausf, outbuf + 16, 16);
 	return 1;
 }
@@ -382,7 +383,7 @@ int SoR_MAC_I_UE_generator(
 )
 {
 	unsigned char outbuf[32];
-	Universal_key_generator(0x78, Kausf, &SoR_Acknowledgement, Counter_sor, NULL, outbuf);
+	Universal_key_generator(0x78, Kausf, &SoR_Acknowledgement, 1, Counter_sor, 2, NULL, NULL, outbuf);
 	memcpy(SoR_MAC_I_UE, outbuf + 16, 16);
 	return 1;
 }
@@ -396,7 +397,7 @@ int UPU_MAC_I_ausf_generator(
 )
 {
 	unsigned char outbuf[32];
-	Universal_key_generator(0x7B, Kausf, UE_Parameters_Update_Data, Counter_upu, NULL, outbuf);
+	Universal_key_generator(0x7B, Kausf, UE_Parameters_Update_Data, NULL, Counter_upu, 2, NULL, NULL, outbuf);
 	memcpy(UPU_MAC_I_ausf, outbuf + 16, 16);
 	return 1;
 }
@@ -410,7 +411,7 @@ int UPU_MAC_I_UE_generator(
 )
 {
 	unsigned char outbuf[32];
-	Universal_key_generator(0x7C, Kausf, &UPU_Acknowledgement, Counter_upu, NULL, outbuf);
+	Universal_key_generator(0x7C, Kausf, &UPU_Acknowledgement, 1, Counter_upu, 2, NULL, NULL, outbuf);
 	memcpy(UPU_MAC_I_UE, outbuf + 16, 16);
 	return 1;
 }
@@ -422,8 +423,7 @@ int Kasme_srvcc_generator(
 	unsigned char* Kasme_srvcc
 )
 {
-	unsigned char outbuf[32];
-	Universal_key_generator(0x7D, Kamf, NAS_Downlink_COUNT, NULL, NULL, Kasme_srvcc);
+	Universal_key_generator(0x7D, Kamf, NAS_Downlink_COUNT, 4, NULL, NULL, NULL, NULL, Kasme_srvcc);
 	return 1;
 }
 
